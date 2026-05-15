@@ -16,14 +16,19 @@ Build a dynamic QR code system where:
 Answer these before you start coding:
 
 1. **Static vs Dynamic QR Code:** Why does this system use dynamic QR codes (encode short URL) instead of static (encode original URL directly)? When would you choose static instead?
+A: 短網址的 Payload Size 比較短，且能做 Routing Control，並且因為會做 redirection 所以可以做數據追蹤與分析
 
 2. **Token Generation:** How will you generate short URL tokens? What happens when two different URLs produce the same token? How does collision probability change as the number of tokens grows?
+A: 用 url + user_id 去做 base62 演算法產生 token，如果兩個不同的網站做出 same token，資料庫會拒絕寫入而發生攔截異常，碰撞機率變化不確定，反正是越來越高
 
 3. **Redirect Strategy:** Why 302 (temporary) instead of 301 (permanent)? What are the trade-offs for analytics, URL modification, and latency?
+A: temporary 在對方修改 URL 後，下次 request 就會立刻被導向新的目標網址，而 permanent 就不能這樣切換，然後 permanent 會直接用 cache 記起來，雖然可以降低伺服器附載與跳轉延遲，但很難更新目標網址與做數據追蹤
 
 4. **URL Normalization:** What normalization rules do you need? Why is `http://Example.com/` and `https://example.com` potentially the same URL?
+A: Normalization rules: url 全小寫，並且轉換網址到格式符合 https://domain/path 這種形式
 
 5. **Error Semantics:** What should happen when someone scans a deleted link vs a non-existent link? Should the HTTP status codes be different?
+A: 嚴格語意上來說，掃到 deleted link，要回傳 404，掃到 non-existent link，要回傳 410，但以資安來說好像都回傳 404 就好
 
 ## Verification
 

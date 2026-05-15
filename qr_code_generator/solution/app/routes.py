@@ -1,5 +1,5 @@
 import io
-from datetime import datetime
+from datetime import datetime, timezone
 
 import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,7 +15,7 @@ from .url_validator import validate_url
 
 router = APIRouter()
 
-# In-memory cache (simulates Redis for prototype)
+# In-memory cache: token → original_url (simulates Redis for prototype)
 redirect_cache: dict[str, str] = {}
 
 BASE_URL = "http://localhost:8000"
@@ -23,12 +23,12 @@ BASE_URL = "http://localhost:8000"
 
 @router.post("/api/qr/create", response_model=CreateResponse)
 def create_qr(req: CreateRequest, db: Session = Depends(get_db)):
-    try:                                                                                                                                                           
-        normalized_url = validate_url(req.url)                
-    except ValueError as e:                                                                                                                                        
+    try:
+        normalized_url = validate_url(req.url)
+    except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    token = generate_token(normalized_url, db)
 
+    token = generate_token(normalized_url, db)
     mapping = UrlMapping(
         token=token,
         original_url=normalized_url,
@@ -37,14 +37,11 @@ def create_qr(req: CreateRequest, db: Session = Depends(get_db)):
     db.add(mapping)
     db.commit()
 
-    short_url = f"{BASE_URL}/r/{token}"
-
-    # Warm cache
     redirect_cache[token] = normalized_url
 
     return CreateResponse(
         token=token,
-        short_url=short_url,
+        short_url=f"{BASE_URL}/r/{token}",
         qr_code_url=f"{BASE_URL}/api/qr/{token}/image",
         original_url=normalized_url,
     )
@@ -52,9 +49,7 @@ def create_qr(req: CreateRequest, db: Session = Depends(get_db)):
 
 @router.get("/r/{token}")
 def redirect(token: str, request: Request, db: Session = Depends(get_db)):
-    """Redirect fallback flow: Cache -> DB -> 404/410 (from slides mermaid diagram)"""
-    from datetime import datetime, timezone
-
+    """Cache → DB lookup → 302 / 410 / 404"""
     if token in redirect_cache:
         _record_scan(token, request, db)
         return RedirectResponse(url=redirect_cache[token], status_code=302)
@@ -76,8 +71,7 @@ def redirect(token: str, request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/qr/{token}", response_model=QRInfoResponse)
 def get_qr_info(token: str, db: Session = Depends(get_db)):
-    mapping = _get_mapping_or_404(token, db)
-    return mapping
+    return _get_mapping_or_404(token, db)
 
 
 @router.patch("/api/qr/{token}", response_model=QRInfoResponse)
@@ -89,14 +83,13 @@ def update_qr(token: str, req: UpdateRequest, db: Session = Depends(get_db)):
             mapping.original_url = validate_url(req.url)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        # Invalidate cache
         redirect_cache.pop(token, None)
 
     if req.expires_at is not None:
         mapping.expires_at = req.expires_at
-        # Invalidate cache
         redirect_cache.pop(token, None)
 
+    mapping.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(mapping)
     return mapping
@@ -107,7 +100,6 @@ def delete_qr(token: str, db: Session = Depends(get_db)):
     mapping = _get_mapping_or_404(token, db)
     mapping.is_deleted = True
     db.commit()
-    # Invalidate cache
     redirect_cache.pop(token, None)
     return {"detail": "Deleted"}
 

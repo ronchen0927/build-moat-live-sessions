@@ -6,13 +6,12 @@ from sqlalchemy.orm import Session
 
 from .models import UrlMapping
 
-BASE62_CHARS = string.ascii_letters + string.digits  # a-zA-Z0-9
+BASE62_CHARS = string.ascii_letters + string.digits
 TOKEN_LENGTH = 7
 MAX_RETRIES = 10
 
 
 def base62_encode(data: bytes) -> str:
-    """Convert bytes to Base62 string."""
     num = int.from_bytes(data, "big")
     if num == 0:
         return BASE62_CHARS[0]
@@ -23,16 +22,16 @@ def base62_encode(data: bytes) -> str:
     return "".join(reversed(result))
 
 
-def token_exists_in_db(db: Session, token: str) -> bool:
+def _token_exists(db: Session, token: str) -> bool:
     return db.query(UrlMapping).filter(UrlMapping.token == token).first() is not None
 
 
 def generate_token(url: str, db: Session) -> str:
-    """SHA-256 + nonce + Base62 token generation with collision retry."""
+    """SHA-256(url + nonce) → base62 → 7 chars, retry on collision."""
     for attempt in range(MAX_RETRIES):
         nonce = f"{url}{attempt}{time.time_ns()}"
         digest = hashlib.sha256(nonce.encode()).digest()
         token = base62_encode(digest)[:TOKEN_LENGTH]
-        if not token_exists_in_db(db, token):
+        if not _token_exists(db, token):
             return token
     raise RuntimeError("Failed to generate a unique token after max retries")

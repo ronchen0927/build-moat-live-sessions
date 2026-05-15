@@ -1,4 +1,4 @@
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 MAX_URL_LENGTH = 2048
 
@@ -9,16 +9,8 @@ BLOCKED_DOMAINS = {
 }
 
 
-def is_blocked_domain(hostname: str | None) -> bool:
-    if hostname is None:
-        return True
-    return hostname.lower() in BLOCKED_DOMAINS
-
-
 def validate_url(url: str) -> str:
-    """Format check, normalization, and blocklist validation."""
-    from urllib.parse import urlunparse
-
+    """Validate format, normalize, and check blocklist. Returns normalized URL."""
     if len(url) > MAX_URL_LENGTH:
         raise ValueError(f"URL exceeds maximum length of {MAX_URL_LENGTH}")
 
@@ -27,15 +19,22 @@ def validate_url(url: str) -> str:
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"Invalid URL scheme '{parsed.scheme}': only http/https allowed")
 
-    if is_blocked_domain(parsed.hostname):
-        raise ValueError(f"Domain '{parsed.hostname}' is blocked")
+    hostname = parsed.hostname
+    if hostname is None:
+        raise ValueError("URL is missing a hostname")
 
+    if hostname.lower() in BLOCKED_DOMAINS:
+        raise ValueError(f"Domain '{hostname}' is blocked")
+
+    # Normalize: upgrade to https, lowercase hostname, strip trailing slash from path
     normalized_path = parsed.path.rstrip("/") or ""
-    return urlunparse((
+    normalized = urlunparse((
         "https",
-        parsed.hostname.lower() + (f":{parsed.port}" if parsed.port else ""),
+        hostname.lower() + (f":{parsed.port}" if parsed.port else ""),
         normalized_path,
         parsed.params,
         parsed.query,
         parsed.fragment,
     ))
+
+    return normalized
