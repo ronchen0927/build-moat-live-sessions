@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from .db import get_conn
@@ -33,7 +33,7 @@ def create_job(description: str, scheduled_at: datetime) -> Job:
             description,
             scheduled_at.isoformat(),
             get_time_bucket(scheduled_at),
-            datetime.utcnow().isoformat(),
+            datetime.now(timezone.utc).isoformat(),
         ),
     )
     conn.commit()
@@ -77,7 +77,7 @@ def mark_completed(job_id: int) -> None:
     conn = get_conn()
     conn.execute(
         "UPDATE jobs SET status = 'completed', completed_at = ? WHERE id = ?",
-        (datetime.utcnow().isoformat(), job_id),
+        (datetime.now(timezone.utc).isoformat(), job_id),
     )
     conn.commit()
 
@@ -85,7 +85,7 @@ def mark_completed(job_id: int) -> None:
 def find_due_jobs(now: Optional[datetime] = None) -> list[Job]:
     """Return pending jobs whose scheduled_at <= now, using bucket pre-filter."""
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
     current_bucket = get_time_bucket(now)
     rows = get_conn().execute(
         "SELECT * FROM jobs"
