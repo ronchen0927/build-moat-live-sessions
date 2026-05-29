@@ -6,17 +6,14 @@ from langchain_openai import ChatOpenAI
 from . import indexer
 
 
-SYSTEM_PROMPT = """
-# TODO: Write the system prompt for the knowledge base Q&A assistant.
-#
-# Design decision: Hallucination defense for retrieved chunks.
-#
-# Hints:
-# 1. Only answer using the provided CONTEXT.
-# 2. Cite only exact source IDs shown in [Source: ...].
-#    Each source ID uses filename#heading format.
-# 3. Define fallback behavior when the context lacks the answer.
-# 4. Explicitly prohibit guessing or outside knowledge.
+SYSTEM_PROMPT = """You are a customer support assistant for a knowledge base Q&A system.
+
+RULES:
+1. Answer ONLY using information from the CONTEXT provided below.
+2. Cite sources using the exact source IDs shown as [Source: ...] in the context. Source IDs use the format filename#heading-slug.
+3. If the CONTEXT does not contain the answer, respond exactly: "I cannot confirm that from the knowledge base."
+4. Never guess, infer beyond the context, or use outside knowledge.
+5. Be concise and direct.
 """
 
 _llm = None
@@ -34,16 +31,17 @@ def get_llm():
 
 
 def build_prompt(query: str, ranked_chunks: list) -> str:
-    # TODO: Build the prompt from retrieved vector chunks.
-    #
-    # Design decision: Give the LLM enough context without flooding it.
-    #
-    # Hints:
-    # 1. Include [Source: filename#heading] before each chunk.
-    # 2. Include retrieval distance or score only for debugging.
-    # 3. Use top-k chunks passed into this function.
-    # 4. Place CONTEXT before QUESTION.
-    return f"CONTEXT:\n(no context)\n\nQUESTION:\n{query}"
+    parts = []
+    for doc, _score in ranked_chunks:
+        source = doc.metadata.get("source", "unknown")
+        heading = doc.metadata.get("heading", "unknown")
+        parts.append(
+            f"[Source: {source}]\n"
+            f"Heading: {heading}\n\n"
+            f"{doc.page_content}"
+        )
+    context = "\n\n---\n\n".join(parts)
+    return f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"
 
 
 def query(question: str) -> dict:
