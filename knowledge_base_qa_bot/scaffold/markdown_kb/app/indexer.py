@@ -70,72 +70,80 @@ def tokenize(text: str) -> list[str]:
 
 
 def parse_markdown(path: Path) -> list[Section]:
-    text = path.read_text(encoding="utf-8")
-    filename = path.name
-    result: list[Section] = []
+    parsed: list[Section] = []
     heading_stack: list[tuple[int, str]] = []
-    current_heading: str | None = None
-    content_lines: list[str] = []
+    current_heading = path.stem.replace("_", " ").title()
+    current_level = 1
+    current_lines: list[str] = []
 
-    def flush():
-        nonlocal current_heading, content_lines
-        if current_heading is None:
+    def flush() -> None:
+        nonlocal current_lines
+        content = "\n".join(current_lines).strip()
+        if not content:
+            current_lines = []
             return
-        content = "\n".join(content_lines).strip()
-        heading_path = [h for _, h in heading_stack]
-        result.append(Section(
-            id=f"{filename}#{slugify(current_heading)}",
-            file=filename,
-            heading=current_heading,
-            heading_path=heading_path,
-            content=content,
-            tokens=tokenize(current_heading + " " + content),
-        ))
-        content_lines = []
+        heading_path = [title for _, title in heading_stack] or [current_heading]
+        section_id = f"{path.name}#{slugify(current_heading)}"
+        full_text = "\n".join([*heading_path, content])
+        parsed.append(
+            Section(
+                id=section_id,
+                file=path.name,
+                heading=current_heading,
+                heading_path=heading_path,
+                content=content,
+                tokens=tokenize(full_text),
+            )
+        )
+        current_lines = []
 
-    for line in text.splitlines():
-        m = HEADING_RE.match(line)
-        if m:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = HEADING_RE.match(line)
+        if match:
             flush()
-            level = len(m.group(1))
-            heading_text = m.group(2)
-            heading_stack = [(l, h) for l, h in heading_stack if l < level]
-            heading_stack.append((level, heading_text))
-            current_heading = heading_text
+            current_level = len(match.group(1))
+            current_heading = match.group(2).strip()
+            heading_stack = [(level, title) for level, title in heading_stack if level < current_level]
+            heading_stack.append((current_level, current_heading))
         else:
-            content_lines.append(line)
+            current_lines.append(line)
 
     flush()
-    return result
+    return parsed
 
 
 def write_index_json(index_path: Path = INDEX_PATH) -> None:
     index_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "sections": [s.to_dict() for s in sections],
+        "sections": [section.to_dict() for section in sections],
         "stats": {
             "files_indexed": files_indexed,
             "sections_indexed": len(sections),
             "avg_doc_len": avg_doc_len,
         },
     }
-    index_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    index_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def rebuild_stats() -> None:
     global doc_freq, avg_doc_len, files_indexed
-    doc_freq.clear()
+
+    files_indexed = len({section.file for section in sections})
+    doc_freq = Counter()
     for section in sections:
-        for token in set(section.tokens):
-            doc_freq[token] += 1
+        doc_freq.update(set(section.tokens))
     avg_doc_len = sum(len(s.tokens) for s in sections) / len(sections) if sections else 0.0
-    files_indexed = len({s.file for s in sections})
 
 
 def load_index_json(index_path: Path = INDEX_PATH) -> tuple[int, int]:
     global sections
+
     if not index_path.exists():
         return 0, 0
+
     payload = json.loads(index_path.read_text(encoding="utf-8"))
     sections = [
         Section(
@@ -146,7 +154,7 @@ def load_index_json(index_path: Path = INDEX_PATH) -> tuple[int, int]:
             content=item["content"],
             tokens=item["tokens"],
         )
-        for item in payload["sections"]
+        for item in payload.get("sections", [])
     ]
     rebuild_stats()
     return files_indexed, len(sections)
@@ -155,38 +163,36 @@ def load_index_json(index_path: Path = INDEX_PATH) -> tuple[int, int]:
 def build_index(docs_dir: Path = DOCS_DIR) -> tuple[int, int]:
     global sections, doc_freq, avg_doc_len, files_indexed
 
-    sections = []
-    doc_freq = Counter()
-    avg_doc_len = 0.0
-    files_indexed = 0
+    markdown_files = sorted(docs_dir.glob("*.md"))
+    new_sections: list[Section] = []
+    for path in markdown_files:
+        new_sections.extend(parse_markdown(path))
 
-    for md_path in sorted(docs_dir.glob("*.md")):
-        sections.extend(parse_markdown(md_path))
-
+    sections = new_sections
     rebuild_stats()
     write_index_json()
     return files_indexed, len(sections)
 
 
 def bm25_score(query_tokens: list[str], section: Section, k1: float = 1.5, b: float = 0.75) -> float:
-    if not query_tokens or not sections or avg_doc_len == 0.0:
+    if not sections or not section.tokens:
         return 0.0
-    tf = Counter(section.tokens)
-    doc_len = len(section.tokens)
-    n = len(sections)
-    heading_tokens = set(tokenize(" ".join(section.heading_path)))
+
+    counts = Counter(section.tokens)
     score = 0.0
-    for token in query_tokens:
-        if token not in tf:
+    for term in query_tokens:
+        if term not in counts:
             continue
-        f = tf[token]
-        df = doc_freq.get(token, 0)
-        if df == 0:
-            continue
-        idf = math.log((n - df + 0.5) / (df + 0.5) + 1)
-        tf_norm = (f * (k1 + 1)) / (f + k1 * (1 - b + b * doc_len / avg_doc_len))
-        boost = 1.5 if token in heading_tokens else 1.0
-        score += idf * tf_norm * boost
+        n_docs = len(sections)
+        idf = math.log(1 + (n_docs - doc_freq[term] + 0.5) / (doc_freq[term] + 0.5))
+        tf = counts[term]
+        length_norm = 1 - b + b * (len(section.tokens) / avg_doc_len)
+        score += idf * ((tf * (k1 + 1)) / (tf + k1 * length_norm))
+
+    heading_text = " ".join(section.heading_path).lower()
+    if any(term in heading_text for term in query_tokens):
+        score += 1.5
+
     return score
 
 

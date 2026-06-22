@@ -6,16 +6,14 @@ from langchain_openai import ChatOpenAI
 from . import indexer
 
 
-CANNOT_CONFIRM = "I cannot confirm that from the knowledge base."
+CANNOT_CONFIRM = "I cannot confirm from the knowledge base."
 
-SYSTEM_PROMPT = f"""You are a customer support assistant for a knowledge base Q&A system.
-
-RULES:
-1. Answer ONLY using information from the CONTEXT provided below.
-2. Cite sources using the exact source IDs shown as [Source: ...] in the context. Source IDs use the format filename#heading-slug.
-3. If the CONTEXT does not contain the answer, respond exactly: "{CANNOT_CONFIRM}"
-4. Never guess, infer beyond the context, or use outside knowledge.
-5. Be concise and direct.
+SYSTEM_PROMPT = f"""You are a knowledge base Q&A assistant.
+Rules:
+1. Only answer using the provided CONTEXT.
+2. Cite sources using filename#heading.
+3. If the CONTEXT does not contain the answer, say: "{CANNOT_CONFIRM}"
+4. Do not guess, invent policies, or use outside knowledge.
 """
 
 # Q5 (weak/irrelevant retrieval -> honest fallback). BM25 scores are not
@@ -25,7 +23,7 @@ RULES:
 #     below the top hit (filters semantic false positives without discarding a
 #     legitimate single answer).
 # RECALL_K widens recall before trimming; PROMPT_K caps how many sections reach
-# the prompt (Q3 token-budget control).
+# the prompt (token-budget control).
 MIN_SCORE = float(os.getenv("KB_MIN_SCORE", "0.5"))
 REL_RATIO = float(os.getenv("KB_REL_RATIO", "0.3"))
 RECALL_K = int(os.getenv("KB_RECALL_K", "5"))
@@ -56,15 +54,20 @@ def get_llm():
 
 
 def build_prompt(query: str, ranked_sections: list) -> str:
-    parts = []
-    for section, _score in ranked_sections:
-        heading_path_str = " > ".join(section.heading_path)
-        parts.append(
+    context_blocks = []
+    for section, score in ranked_sections:
+        heading_lines = "\n".join(
+            f"{'#' * (idx + 1)} {heading}"
+            for idx, heading in enumerate(section.heading_path)
+        )
+        context_blocks.append(
             f"[Source: {section.id}]\n"
-            f"Heading: {heading_path_str}\n\n"
+            f"[BM25 score: {score:.2f}]\n"
+            f"{heading_lines}\n\n"
             f"{section.content}"
         )
-    context = "\n\n---\n\n".join(parts)
+
+    context = "\n\n---\n\n".join(context_blocks)
     return f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"
 
 
