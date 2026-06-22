@@ -1,4 +1,8 @@
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+# Load .env before anything reads OPENAI_API_KEY.
+load_dotenv()
 
 from .indexer import load_vector_index
 from .routes import router
