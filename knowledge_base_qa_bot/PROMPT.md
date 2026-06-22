@@ -38,13 +38,45 @@ This is the traditional RAG path: semantic retrieval with embeddings and a vecto
 Answer these before you start coding:
 
 1. Which retrieval strategy did you choose, and why?
+  兩種都可接受，重點是理由要對上題目情境（小型、Markdown、要可檢查、要引用 heading）：
+  - 選 Markdown KB（多數人這題會選這個）：因為 KB 很小（10 個檔）、文件本身就是結構化 Markdown、要求 index.json
+  可被人眼檢查、引用單位剛好就是 heading。BM25 不需要 embedding、不花錢、可離線、好除錯
+  - 選 Vector RAG：如果預期使用者會用同義詞／換句話說問問題（語意檢索贏關鍵字），或之後要擴到大量文件
 2. What is the retrieval unit in your design: file, section, or chunk?
+  - Markdown KB → section（以 heading 切）。剛好對上引用格式 filename#heading，一個 section 語意完整又不會太長
+  - Vector RAG → chunk（section 太長時再切，常見 200–500 token，帶 overlap）
+  主流答案：section 是預設，只有當單一 section 太長超過 context 才往下切成 chunk
 3. How do you decide what goes into the prompt?
+  通用做法：
+  - 檢索 → 取 top-k（常見 k=3~5）
+  - 加 分數門檻：低於門檻就丟掉（接到第 5 題）
+  - 控制 token 預算：照分數排序塞到上限為止
+  - 每段帶上來源標記（filename#heading），讓模型能引用
+  - system prompt 明確規定：只能用提供的 context 回答，找不到就說無法確認
+system prompt 
 4. How do you cite sources so users can inspect the original Markdown?
+  - 索引時就為每個 section 存 {file, heading, anchor}
+  - anchor 用 GitHub 風格的 slug（heading 轉小寫、空白變 -、去標點），組成 refund_policy.md#refund-timeline。
+  - 回答時把引用附在後面，使用者可直接開檔跳到該 heading
 5. What should happen when retrieval finds weak or irrelevant results?
+  - 設分數門檻，最佳結果低於門檻 → 不要硬湊引用，直接回 「無法從知識庫確認」（cannot-confirm）
+  - 寧可誠實說不知道，也不要產生沒有出處的幻覺
+  - 這正是 Stretch Goal「Score Threshold and Fallback」要的
 6. When would you switch from Markdown KB to Vector RAG?
+  - 使用者開始用同義詞／自然語言換句話說，BM25 關鍵字對不上（synonym miss）
+  - 文件變多，純關鍵字 recall 下降
+  - 需要跨語言或語意相似度
 7. When would you switch from Vector RAG back to a Markdown index?
+  - 規模其實很小、語意檢索是殺雞用牛刀
+  - 想要可稽核、可 diff、可人工檢查（embedding 是黑盒，難解釋為何選這段）
+  - 想省成本／離線（embedding 每次查詢要花錢、要 API）
+  - 出現語意誤命中（semantic false positive）難控管時
 8. If the knowledge base grows from 10 files to 100,000 files, what changes?
+  - 索引：index.json 全載入記憶體不可行 → 改用真正的搜尋引擎（FAISS/Elasticsearch/向量 DB），改批次／增量索引
+  - 檢索：純 BM25 或 brute-force 向量比對撐不住 → 需 ANN 索引、分片（sharding）
+  - 架構：索引與查詢服務分離、加快取、加 metadata 過濾先縮小範圍
+  - 品質：常走 hybrid（BM25 + 向量）+ re-ranking 的兩階段
+  - 維運：增量更新、版本控管、監控檢索品質
 
 ## Verification
 
