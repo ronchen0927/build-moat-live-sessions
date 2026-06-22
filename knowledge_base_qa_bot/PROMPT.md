@@ -62,6 +62,11 @@ system prompt
   - 設分數門檻，最佳結果低於門檻 → 不要硬湊引用，直接回 「無法從知識庫確認」（cannot-confirm）
   - 寧可誠實說不知道，也不要產生沒有出處的幻覺
   - 這正是 Stretch Goal「Score Threshold and Fallback」要的
+  - 實作上用「兩道門檻」（見 retrieval.py 的 select_sections）：因為 BM25 分數在不同查詢間不可比，
+    單一絕對門檻分不開「正確的單一答案」與「誤命中」。
+    - 絕對門檻 MIN_SCORE：濾掉近乎 0 的關鍵字雜訊
+    - 相對門檻 REL_RATIO：只留「分數 ≥ 最高分 × 比例」的段落，砍掉與第一名差很多的語意誤命中
+    - 例：email 查詢最高分 ~12、誤命中 ~1.7 → 被相對門檻砍；退款查詢只有單一 ~1.75 → 保留
 6. When would you switch from Markdown KB to Vector RAG?
   - 使用者開始用同義詞／自然語言換句話說，BM25 關鍵字對不上（synonym miss）
   - 文件變多，純關鍵字 recall 下降

@@ -196,11 +196,12 @@ def bm25_score(query_tokens: list[str], section: Section, k1: float = 1.5, b: fl
     return score
 
 
-def search(query: str, k: int = 3) -> list[tuple[Section, float]]:
+def search(query: str, k: int = 3, min_score: float = 0.0) -> list[tuple[Section, float]]:
     query_tokens = tokenize(query)
     ranked = [
         (section, bm25_score(query_tokens, section))
         for section in sections
     ]
+    ranked = [(section, score) for section, score in ranked if score > min_score]
     ranked.sort(key=lambda item: item[1], reverse=True)
-    return [(section, score) for section, score in ranked[:k] if score > 0]
+    return ranked[:k]
