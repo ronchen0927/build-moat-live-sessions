@@ -1,3 +1,4 @@
+import json
 import os
 
 from langchain.schema import HumanMessage, SystemMessage
@@ -71,26 +72,8 @@ def build_prompt(query: str, ranked_sections: list) -> str:
     return f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"
 
 
-def query(question: str) -> dict:
-    if not indexer.sections:
-        return {
-            "answer": "The knowledge base has not been indexed yet. Call POST /index first.",
-            "sources": [],
-        }
-
-    ranked_sections = select_sections(question)
-    if not ranked_sections:
-        return {
-            "answer": CANNOT_CONFIRM,
-            "sources": [],
-        }
-
-    response = get_llm().invoke([
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=build_prompt(question, ranked_sections)),
-    ])
-
-    sources = [
+def format_sources(ranked_sections: list) -> list:
+    return [
         {
             "source": section.id,
             "heading": " > ".join(section.heading_path),
@@ -100,7 +83,61 @@ def query(question: str) -> dict:
         for section, score in ranked_sections
     ]
 
+
+NOT_INDEXED = "The knowledge base has not been indexed yet. Call POST /index first."
+
+
+def query(question: str) -> dict:
+    if not indexer.sections:
+        return {"answer": NOT_INDEXED, "sources": []}
+
+    ranked_sections = select_sections(question)
+    if not ranked_sections:
+        return {"answer": CANNOT_CONFIRM, "sources": []}
+
+    response = get_llm().invoke([
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=build_prompt(question, ranked_sections)),
+    ])
+
     return {
         "answer": response.content,
-        "sources": sources,
+        "sources": format_sources(ranked_sections),
     }
+
+
+def _sse(event: str, data: dict) -> str:
+    """Serialize one Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def stream_query(question: str):
+    """Yield SSE frames: sources first, then answer tokens, then a done event.
+
+    Same grounding and citation rules as query(): sources are sent up front so
+    the UI can show what context the answer is based on, and weak/empty
+    retrieval streams the honest cannot-confirm message instead of an answer.
+    """
+    if not indexer.sections:
+        yield _sse("sources", {"sources": []})
+        yield _sse("token", {"text": NOT_INDEXED})
+        yield _sse("done", {})
+        return
+
+    ranked_sections = select_sections(question)
+    # Send selected sources before any token so the client can render grounding.
+    yield _sse("sources", {"sources": format_sources(ranked_sections)})
+
+    if not ranked_sections:
+        yield _sse("token", {"text": CANNOT_CONFIRM})
+        yield _sse("done", {})
+        return
+
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=build_prompt(question, ranked_sections)),
+    ]
+    for chunk in get_llm().stream(messages):
+        if chunk.content:
+            yield _sse("token", {"text": chunk.content})
+    yield _sse("done", {})

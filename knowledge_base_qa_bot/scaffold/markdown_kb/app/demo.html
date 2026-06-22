@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Knowledge Base Q&amp;A — Streaming Demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 720px; margin: 0 auto; padding: 2rem 1rem; line-height: 1.5;
+  }
+  h1 { font-size: 1.25rem; margin-bottom: 0.25rem; }
+  .hint { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+  input[type=text] {
+    flex: 1; padding: 0.6rem 0.75rem; font-size: 1rem;
+    border: 1px solid #ccc; border-radius: 8px;
+  }
+  button {
+    padding: 0.6rem 1.1rem; font-size: 1rem; border: 0; border-radius: 8px;
+    background: #2563eb; color: #fff; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin: 1.25rem 0 0.4rem; }
+  #sources { display: flex; flex-direction: column; gap: 0.5rem; }
+  .source {
+    border: 1px solid #e2e2e2; border-radius: 8px; padding: 0.6rem 0.75rem;
+    font-size: 0.85rem; background: rgba(127,127,127,0.06);
+  }
+  .source .id { font-family: ui-monospace, monospace; color: #2563eb; }
+  .source .score { color: #888; float: right; }
+  .source .snippet { color: #666; margin-top: 0.3rem; }
+  #answer { white-space: pre-wrap; font-size: 1.05rem; min-height: 1.5rem; }
+  #answer.empty::before { content: "…"; color: #bbb; }
+  .examples { margin-top: 0.5rem; font-size: 0.8rem; color: #888; }
+  .examples a { color: #2563eb; cursor: pointer; text-decoration: underline; margin-right: 0.75rem; }
+</style>
+</head>
+<body>
+  <h1>Knowledge Base Q&amp;A</h1>
+  <div class="hint">Streams over <code>POST /chat/stream</code> — sources arrive first, then the answer token by token.</div>
+
+  <form id="form">
+    <input id="q" type="text" placeholder="Ask a question…" autocomplete="off" />
+    <button id="ask" type="submit">Ask</button>
+  </form>
+  <div class="examples">
+    Try:
+    <a data-q="How long do refunds take?">refunds</a>
+    <a data-q="Can I change my email address?">change email</a>
+    <a data-q="Which restaurants are nearby?">out of scope</a>
+  </div>
+
+  <div class="label">Sources</div>
+  <div id="sources"></div>
+
+  <div class="label">Answer</div>
+  <div id="answer" class="empty"></div>
+
+<script>
+const form = document.getElementById("form");
+const input = document.getElementById("q");
+const askBtn = document.getElementById("ask");
+const sourcesEl = document.getElementById("sources");
+const answerEl = document.getElementById("answer");
+
+document.querySelectorAll(".examples a").forEach(a => {
+  a.addEventListener("click", () => { input.value = a.dataset.q; form.requestSubmit(); });
+});
+
+function renderSources(sources) {
+  sourcesEl.innerHTML = "";
+  if (!sources.length) {
+    sourcesEl.innerHTML = '<div class="source">No sources passed the retrieval threshold.</div>';
+    return;
+  }
+  for (const s of sources) {
+    const div = document.createElement("div");
+    div.className = "source";
+    div.innerHTML =
+      `<span class="score">BM25 ${s.score}</span>` +
+      `<span class="id">${s.source}</span>` +
+      `<div class="snippet">${s.content}</div>`;
+    sourcesEl.appendChild(div);
+  }
+}
+
+function handleFrame(frame) {
+  let event = "message", data = "";
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  if (!data) return;
+  const payload = JSON.parse(data);
+  if (event === "sources") renderSources(payload.sources);
+  else if (event === "token") {
+    answerEl.classList.remove("empty");
+    answerEl.textContent += payload.text;
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const query = input.value.trim();
+  if (!query) return;
+
+  askBtn.disabled = true;
+  sourcesEl.innerHTML = "";
+  answerEl.textContent = "";
+  answerEl.classList.add("empty");
+
+  try {
+    const res = await fetch("/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        handleFrame(buffer.slice(0, idx));
+        buffer = buffer.slice(idx + 2);
+      }
+    }
+  } catch (err) {
+    answerEl.classList.remove("empty");
+    answerEl.textContent = "Request failed: " + err;
+  } finally {
+    askBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
