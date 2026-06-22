@@ -55,11 +55,14 @@ Restarting the server should not require rebuilding immediately. Re-run `/index`
 
 ## Prerequisites
 
-Both guided tracks use OpenAI for final answer generation:
+Both guided tracks use OpenAI for final answer generation. Copy the example file and fill in your key:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+cp .env.example .env
+# then edit .env and set OPENAI_API_KEY=sk-...
 ```
+
+`.env` is git-ignored and must never be committed. The app loads it at startup via `python-dotenv` (`load_dotenv()`).
 
 The Markdown KB track does not need embeddings. The Vector RAG track uses OpenAI embeddings.
 

@@ -1,0 +1,14 @@
+# Secrets
+.env
+.env.local
+
+# Generated index
+.kb/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
